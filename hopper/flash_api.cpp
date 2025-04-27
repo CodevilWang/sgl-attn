@@ -624,7 +624,8 @@ mha_fwd(at::Tensor &q,   // (b, s_q, h, d) or (total_q, h, d) if there is cu_seq
         std::optional<at::Tensor> &scheduler_metadata_,  // (b + 1)
         int num_splits,
         std::optional<bool> pack_gqa_,
-        int const sm_margin
+        int const sm_margin,
+        bool force_scheduler_single_tile
         ) {
 
     auto dprops = at::cuda::getCurrentDeviceProperties();
@@ -843,6 +844,7 @@ mha_fwd(at::Tensor &q,   // (b, s_q, h, d) or (total_q, h, d) if there is cu_seq
     }
     params.page_size = page_size;
     params.num_pages = num_pages;
+    params.force_scheduler_single_tile = force_scheduler_single_tile;
 
     if (k_new_.has_value()) {  // This needs to be set before get_pagedkv_tma
         at::Tensor k_new, v_new;

@@ -48,7 +48,8 @@ def _flash_attn_forward(
         scheduler_metadata=None,
         num_splits=1,
         pack_gqa=None,
-        sm_margin=0):
+        sm_margin=0,
+        force_scheduler_single_tile=False):
     q, k, k_new, v_new = [maybe_contiguous(x) for x in (q, k, k_new, v_new)]
     v = v.contiguous() if v.stride(-1) != 1 and v.stride(-3) != 1 else v
     cu_seqlens_q, cu_seqlens_k, cu_seqlens_k_new = [
@@ -94,6 +95,7 @@ def _flash_attn_forward(
         num_splits,
         pack_gqa,
         sm_margin,
+        force_scheduler_single_tile,
     )
     return out, softmax_lse, *rest
 
@@ -334,6 +336,7 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         pack_gqa=None,
         deterministic=False,
         sm_margin=0,
+        force_scheduler_single_tile=False,
     ):
         if softmax_scale is None:
             softmax_scale = (q.shape[-1] + (qv.shape[-1] if qv is not None else 0)) ** (-0.5)
@@ -362,6 +365,7 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
             num_splits=num_splits,
             pack_gqa=pack_gqa,
             sm_margin=sm_margin,
+            force_scheduler_single_tile=force_scheduler_single_tile,
         )
         # ctx.save_for_backward(q, k, v, out_padded, softmax_lse, cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k)
         ctx.save_for_backward(q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k)
@@ -561,6 +565,7 @@ def flash_attn_varlen_func(
     pack_gqa=None,
     deterministic=False,
     sm_margin=0,
+    force_scheduler_single_tile=False,
 ):
     return FlashAttnVarlenFunc.apply(
         q,
@@ -582,6 +587,7 @@ def flash_attn_varlen_func(
         pack_gqa,
         deterministic,
         sm_margin,
+        force_scheduler_single_tile,
     )
 
 
