@@ -217,7 +217,11 @@ void run_mha_fwd_(Flash_fwd_params &params, cudaStream_t stream) {
                         // Only use Cluster if number of tiles along seqlen_q is even and not varlen
                         CLUSTER_SWITCH(cutlass::ceil_div(params.seqlen_q * (!PackGQA ? 1 : params.h / params.h_k), kBlockM) % 2 == 0, Use_cluster, [&] {
                             static constexpr int ClusterM = Enable_cluster && Use_cluster ? 2 : 1;
-                            run_flash_fwd<Arch, kHeadDim, kHeadDimV, ClusterM, T, T_out, Is_causal, Is_local, Has_softcap, Varlen, PagedKVNonTMA, AppendKV && Varlen, HasQv, PackGQA, Split, V_colmajor, false>(params, stream);
+                            if (params.force_scheduler_single_tile) {
+                                run_flash_fwd<Arch, kHeadDim, kHeadDimV, ClusterM, T, T_out, Is_causal, Is_local, Has_softcap, Varlen, PagedKVNonTMA, AppendKV && Varlen, HasQv, PackGQA, Split, V_colmajor, true>(params, stream);
+                            } else {
+                                run_flash_fwd<Arch, kHeadDim, kHeadDimV, ClusterM, T, T_out, Is_causal, Is_local, Has_softcap, Varlen, PagedKVNonTMA, AppendKV && Varlen, HasQv, PackGQA, Split, V_colmajor, false>(params, stream);
+                            }
                            //  BOOL_SWITCH(params.force_scheduler_single_tile, ForceSchedulerSingleTile, [&] {
                            //      run_flash_fwd<Arch, kHeadDim, kHeadDimV, ClusterM, T, T_out, Is_causal, Is_local, Has_softcap, Varlen, PagedKVNonTMA, AppendKV && Varlen, HasQv, PackGQA, Split, V_colmajor, ForceSchedulerSingleTile>(params, stream);
                            //  });
