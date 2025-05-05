@@ -71,7 +71,7 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
     // On Sm80, noncausal persistent seems a bit slower.
     static constexpr bool UsePersistentScheduler = Arch >= 90 ? !(Split && !Varlen) : ((Is_causal && !Varlen) || (Varlen && Split));
     using Scheduler = std::conditional_t<
-        !UsePersistentScheduler
+        !UsePersistentScheduler,
         SchedulerSingleTile,
         SchedulerPersistent
     >;
