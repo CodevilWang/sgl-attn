@@ -39,6 +39,12 @@ KERNEL_IMPL_TEMPLATE_FWD_SM90 = """#include "flash_fwd_launch_template.h"
 
 #ifndef FLASHATTENTION_DISABLE_HDIM{HEAD_DIM}
 template void run_mha_fwd_<{ARCH}, {DTYPE}, {HEAD_DIM}, {HEAD_DIM_V}, {SPLIT}, {PAGEDKV}, {SOFTCAP}, {PACKGQA}>(Flash_fwd_params &params, cudaStream_t stream);
+#endif
+"""
+
+KERNEL_IMPL_TEMPLATE_FWD_SM90_SINGLE_TILE = """#include "flash_fwd_launch_template_single_tile.h"
+
+#ifndef FLASHATTENTION_DISABLE_HDIM{HEAD_DIM}
 template void run_mha_fwd_with_scheduler_single_tile_<{ARCH}, {DTYPE}, {HEAD_DIM}, {HEAD_DIM_V}, {SPLIT}, {PAGEDKV}, {SOFTCAP}, {PACKGQA}>(Flash_fwd_params &params, cudaStream_t stream);
 #endif
 """
@@ -92,6 +98,7 @@ class Kernel:
     softcap: bool
     packgqa: bool
     direction: str
+    single_tile : bool
 
     @property
     def template(self) -> str:
@@ -99,12 +106,20 @@ class Kernel:
             if self.sm == 90:
                 # Always enable PackGQA for PagedKV or Split to reduce compilation
                 packgqa = self.packgqa or self.paged_kv or self.split
-                return KERNEL_IMPL_TEMPLATE_FWD_SM90.format(
-                    ARCH=str(self.sm), DTYPE=DTYPE_MAP[self.dtype],
-                    HEAD_DIM=self.head_dim, HEAD_DIM_V=self.head_dim_v,
-                    SPLIT=str(self.split).lower(), PAGEDKV=str(self.paged_kv).lower(),
-                    SOFTCAP=str(self.softcap).lower(), PACKGQA=str(packgqa).lower()
-                )
+                if not self.single_tile:
+                    return KERNEL_IMPL_TEMPLATE_FWD_SM90.format(
+                        ARCH=str(self.sm), DTYPE=DTYPE_MAP[self.dtype],
+                        HEAD_DIM=self.head_dim, HEAD_DIM_V=self.head_dim_v,
+                        SPLIT=str(self.split).lower(), PAGEDKV=str(self.paged_kv).lower(),
+                        SOFTCAP=str(self.softcap).lower(), PACKGQA=str(packgqa).lower()
+                    )
+                else:
+                    return KERNEL_IMPL_TEMPLATE_FWD_SM90_SINGLE_TILE.format(
+                        ARCH=str(self.sm), DTYPE=DTYPE_MAP[self.dtype],
+                        HEAD_DIM=self.head_dim, HEAD_DIM_V=self.head_dim_v,
+                        SPLIT=str(self.split).lower(), PAGEDKV=str(self.paged_kv).lower(),
+                        SOFTCAP=str(self.softcap).lower(), PACKGQA=str(packgqa).lower()
+                    )
             else:
                 # Always enable PackGQA for Sm8x to reduce compilation
                 return KERNEL_IMPL_TEMPLATE_FWD_SM8x.format(
@@ -126,7 +141,10 @@ class Kernel:
 
     @property
     def filename(self) -> str:
-        return f"flash_{self.direction}_hdim{self.head_dim}{f'_{self.head_dim_v}' if self.head_dim_v != self.head_dim else ''}_{self.dtype}{'_paged' if self.paged_kv else ''}{'_split' if self.split else ''}{'_softcap' if self.softcap else ''}{'_packgqa' if self.packgqa else ''}_sm{self.sm}.cu"
+        if (self.single_tile and self.direction == "fwd" and self.sm == 90):
+            return f"flash_{self.direction}_hdim{self.head_dim}{f'_{self.head_dim_v}' if self.head_dim_v != self.head_dim else ''}_{self.dtype}{'_paged' if self.paged_kv else ''}{'_split' if self.split else ''}{'_softcap' if self.softcap else ''}{'_packgqa' if self.packgqa else ''}_sm{self.sm}_single_tile.cu"
+        else:
+            return f"flash_{self.direction}_hdim{self.head_dim}{f'_{self.head_dim_v}' if self.head_dim_v != self.head_dim else ''}_{self.dtype}{'_paged' if self.paged_kv else ''}{'_split' if self.split else ''}{'_softcap' if self.softcap else ''}{'_packgqa' if self.packgqa else ''}_sm{self.sm}.cu"
 
 
 def get_all_kernels() -> List[Kernel]:
@@ -136,14 +154,31 @@ def get_all_kernels() -> List[Kernel]:
         if packgqa and (sm < 90 or (sm >= 90 and (paged_kv or split))):
             continue
         if sm >= 90 or dtype in DTYPE_MAP_FWD_SM8x:
-            yield Kernel(sm=sm, dtype=dtype, head_dim=head_dim, head_dim_v=head_dim, split=split, paged_kv=paged_kv, softcap=softcap, packgqa=packgqa, direction="fwd")
+            yield Kernel(sm=sm, dtype=dtype, head_dim=head_dim, head_dim_v=head_dim, split=split, paged_kv=paged_kv, softcap=softcap, packgqa=packgqa, direction="fwd", single_tile = False)
+            yield Kernel(sm=sm, dtype=dtype, head_dim=head_dim, head_dim_v=head_dim, split=split, paged_kv=paged_kv, softcap=softcap, packgqa=packgqa, direction="fwd", single_tile = True)
         if sm == 90 and head_dim == 192:
-            yield Kernel(sm=sm, dtype=dtype, head_dim=head_dim, head_dim_v=128, split=split, paged_kv=paged_kv, softcap=softcap, packgqa=packgqa, direction="fwd")
+            yield Kernel(sm=sm, dtype=dtype, head_dim=head_dim, head_dim_v=128, split=split, \
+                    paged_kv=paged_kv, softcap=softcap, packgqa=packgqa, direction="fwd", \
+                    single_tile = False)
+            yield Kernel(sm=sm, dtype=dtype, head_dim=head_dim, head_dim_v=128, split=split, \
+                    paged_kv=paged_kv, softcap=softcap, packgqa=packgqa, direction="fwd", \
+                    single_tile = True)
         if sm == 90 and head_dim == 64 and dtype in ["bf16", "fp16"]:
-            yield Kernel(sm=sm, dtype=dtype, head_dim=head_dim, head_dim_v=256, split=split, paged_kv=paged_kv, softcap=softcap, packgqa=packgqa, direction="fwd")
-            yield Kernel(sm=sm, dtype=dtype, head_dim=head_dim, head_dim_v=512, split=split, paged_kv=paged_kv, softcap=softcap, packgqa=packgqa, direction="fwd")
+            yield Kernel(sm=sm, dtype=dtype, head_dim=head_dim, head_dim_v=256, split=split, \
+                    paged_kv=paged_kv, softcap=softcap, packgqa=packgqa, direction="fwd", \
+                    single_tile = False)
+            yield Kernel(sm=sm, dtype=dtype, head_dim=head_dim, head_dim_v=256, split=split, \
+                    paged_kv=paged_kv, softcap=softcap, packgqa=packgqa, direction="fwd", \
+                    single_tile = True)
+            yield Kernel(sm=sm, dtype=dtype, head_dim=head_dim, head_dim_v=512, split=split, \
+                    paged_kv=paged_kv, softcap=softcap, packgqa=packgqa, direction="fwd", \
+                    single_tile = False)
+            yield Kernel(sm=sm, dtype=dtype, head_dim=head_dim, head_dim_v=512, split=split, \
+                    paged_kv=paged_kv, softcap=softcap, packgqa=packgqa, direction="fwd", \
+                    single_tile = True)
     for dtype, head_dim, softcap, sm in itertools.product(DTYPE_MAP_BWD.keys(), HEAD_DIMENSIONS, SOFTCAP, SM):
-        yield Kernel(sm=sm, dtype=dtype, head_dim=head_dim, head_dim_v=head_dim, split=False, paged_kv=False, softcap=softcap, packgqa=False, direction="bwd")
+        yield Kernel(sm=sm, dtype=dtype, head_dim=head_dim, head_dim_v=head_dim, split=False,
+                paged_kv=False, softcap=softcap, packgqa=False, direction="bwd", single_tile = False)
 
 
 def batch_hdim(kernels_all) -> List[KERNEL_BATCH]:
@@ -151,15 +186,27 @@ def batch_hdim(kernels_all) -> List[KERNEL_BATCH]:
         if sm < 90:
             continue
         # Same hdim and hdimv
-        kernels = [k for k in kernels_all if k.direction == "fwd" and k.dtype == dtype and k.split == split and k.paged_kv == paged_kv and k.softcap == softcap and k.packgqa == packgqa and k.sm == sm and k.head_dim == k.head_dim_v]
+        kernels = [k for k in kernels_all if k.direction == "fwd" and k.single_tile == False and k.dtype == dtype and k.split == split and k.paged_kv == paged_kv and k.softcap == softcap and k.packgqa == packgqa and k.sm == sm and k.head_dim == k.head_dim_v]
         if len(kernels) > 0:
             filename = f"flash_fwd_hdimall_{dtype}{'_paged' if paged_kv else ''}{'_split' if split else ''}{'_softcap' if softcap else ''}{'_packgqa' if packgqa else ''}_sm{sm}.cu"
             template = "\n".join([f"#include \"{k.filename}\"" for k in kernels])
             yield KERNEL_BATCH(template, filename)
+        kernels = [k for k in kernels_all if k.direction == "fwd" and k.single_tile == True and k.dtype == dtype and k.split == split and k.paged_kv == paged_kv and k.softcap == softcap and k.packgqa == packgqa and k.sm == sm and k.head_dim == k.head_dim_v]
+        if len(kernels) > 0:
+            filename = f"flash_fwd_hdimall_{dtype}{'_paged' if paged_kv else ''}{'_split' if split else ''}{'_softcap' if softcap else ''}{'_packgqa' if packgqa else ''}_sm{sm}_single_tile.cu"
+            template = "\n".join([f"#include \"{k.filename}\"" for k in kernels])
+            yield KERNEL_BATCH(template, filename)
         # Different hdim and hdimv
-        kernels = [k for k in kernels_all if k.direction == "fwd" and k.dtype == dtype and k.split == split and k.paged_kv == paged_kv and k.softcap == softcap and k.packgqa == packgqa and k.sm == sm and k.head_dim != k.head_dim_v]
+        kernels = [k for k in kernels_all if k.direction == "fwd" and k.single_tile == False and k.dtype == dtype and k.split == split and k.paged_kv == paged_kv and k.softcap == softcap and k.packgqa == packgqa and k.sm == sm and k.head_dim != k.head_dim_v]
         if len(kernels) > 0:
             filename = f"flash_fwd_hdimdiff_{dtype}{'_paged' if paged_kv else ''}{'_split' if split else ''}{'_softcap' if softcap else ''}{'_packgqa' if packgqa else ''}_sm{sm}.cu"
+            template = "\n".join([f"#include \"{k.filename}\"" for k in kernels])
+            yield KERNEL_BATCH(template, filename)
+
+        # Different hdim and hdimv
+        kernels = [k for k in kernels_all if k.direction == "fwd" and k.single_tile == True and k.dtype == dtype and k.split == split and k.paged_kv == paged_kv and k.softcap == softcap and k.packgqa == packgqa and k.sm == sm and k.head_dim != k.head_dim_v]
+        if len(kernels) > 0:
+            filename = f"flash_fwd_hdimdiff_{dtype}{'_paged' if paged_kv else ''}{'_split' if split else ''}{'_softcap' if softcap else ''}{'_packgqa' if packgqa else ''}_sm{sm}_single_tile.cu"
             template = "\n".join([f"#include \"{k.filename}\"" for k in kernels])
             yield KERNEL_BATCH(template, filename)
 

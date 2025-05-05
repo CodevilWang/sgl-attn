@@ -6,5 +6,4 @@
 
 #ifndef FLASHATTENTION_DISABLE_HDIM192
 template void run_mha_fwd_<90, cutlass::bfloat16_t, 192, 128, false, false, true, true>(Flash_fwd_params &params, cudaStream_t stream);
-template void run_mha_fwd_with_scheduler_single_tile_<90, cutlass::bfloat16_t, 192, 128, false, false, true, true>(Flash_fwd_params &params, cudaStream_t stream);
 #endif

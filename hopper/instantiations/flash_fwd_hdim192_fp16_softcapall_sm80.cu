@@ -3,4 +3,6 @@
 // This file is auto-generated. See "generate_kernels.py"
 
 #include "flash_fwd_hdim192_fp16_sm80.cu"
+#include "flash_fwd_hdim192_fp16_sm80.cu"
+#include "flash_fwd_hdim192_fp16_softcap_sm80.cu"
 #include "flash_fwd_hdim192_fp16_softcap_sm80.cu"
